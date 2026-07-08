@@ -1,0 +1,23 @@
+﻿services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: sqlite:////app/data/repomind.db
+      SECRET_KEY: change-me-before-production
+      VECTOR_STORE_DIR: /app/data/vector_indexes
+      UPLOAD_DIR: /app/data/uploads
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - repomind-data:/app/data
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  repomind-data:

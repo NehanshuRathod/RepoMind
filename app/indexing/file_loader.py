@@ -1,7 +1,6 @@
-from pathlib import Path
-from typing import List
+﻿from pathlib import Path
+
 
 class FileLoader:
-    def load_files(self,repo_path:Path)->List[Path]:
+    def load_files(self, repo_path: Path) -> list[Path]:
         return [p for p in repo_path.rglob("*") if p.is_file()]
-    
