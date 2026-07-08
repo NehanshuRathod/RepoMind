@@ -11,11 +11,16 @@ class VectorSearchHit:
 
 
 class FaissStore:
-    def __init__(self, dim: int, index: object | None = None) -> None:
+    def __init__(self, dim: int, index: object | None = None, index_type: str = "hnsw") -> None:
         self.dim = dim
         if index is None:
             faiss = self._faiss()
-            self.index = faiss.IndexFlatIP(dim)
+            if index_type == "flat":
+                self.index = faiss.IndexFlatIP(dim)
+            else:
+                self.index = faiss.IndexHNSWFlat(dim, 32, faiss.METRIC_INNER_PRODUCT)
+                self.index.hnsw.efConstruction = 80
+                self.index.hnsw.efSearch = 64
         else:
             self.index = index
 
@@ -28,7 +33,7 @@ class FaissStore:
         return faiss
 
     @classmethod
-    def load(cls, path: Path) -> "FaissStore":
+    def load(cls, path: Path | str) -> "FaissStore":
         faiss = cls._faiss()
         index = faiss.read_index(str(path))
         return cls(dim=index.d, index=index)

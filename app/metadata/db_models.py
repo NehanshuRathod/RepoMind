@@ -1,6 +1,6 @@
 ﻿from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -28,6 +28,11 @@ class Project(Base):
     commit_hash: Mapped[str | None] = mapped_column(String(80), nullable=True)
     vector_index_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(40), default="created", nullable=False)
+    indexing_progress: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    indexing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    indexing_task_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    indexed_file_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    indexed_chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_indexed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -69,6 +74,7 @@ class ChunkMetadata(Base):
     hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     snippet_preview: Mapped[str] = mapped_column(Text, nullable=False)
     vector_position: Mapped[int] = mapped_column(Integer, nullable=False)
+    vector: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     project: Mapped[Project] = relationship(back_populates="chunks")

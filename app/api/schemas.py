@@ -36,11 +36,27 @@ class ProjectRead(BaseModel):
     commit_hash: str | None
     vector_index_path: str | None
     status: str
+    indexing_progress: int
+    indexing_error: str | None
+    indexing_task_id: str | None
+    indexed_file_count: int
+    indexed_chunk_count: int
     last_indexed_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ProjectStatus(BaseModel):
+    project_id: int
+    status: str
+    progress: int
+    task_id: str | None
+    error: str | None
+    indexed_file_count: int
+    indexed_chunk_count: int
+    last_indexed_at: datetime | None
 
 
 class SearchRequest(BaseModel):

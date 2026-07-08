@@ -4,7 +4,7 @@
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: sqlite:////app/data/repomind.db
+      DATABASE_URL: postgresql+psycopg://repomind:repomind@postgres:5432/repomind
       SECRET_KEY: change-me-before-production
       VECTOR_STORE_DIR: /app/data/vector_indexes
       UPLOAD_DIR: /app/data/uploads
@@ -12,7 +12,43 @@
     volumes:
       - repomind-data:/app/data
     depends_on:
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    build: .
+    command: celery -A app.tasks.indexing_tasks worker --loglevel=INFO
+    environment:
+      DATABASE_URL: postgresql+psycopg://repomind:repomind@postgres:5432/repomind
+      SECRET_KEY: change-me-before-production
+      VECTOR_STORE_DIR: /app/data/vector_indexes
+      UPLOAD_DIR: /app/data/uploads
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - repomind-data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: repomind
+      POSTGRES_USER: repomind
+      POSTGRES_PASSWORD: repomind
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U repomind -d repomind"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:7-alpine
@@ -21,3 +57,4 @@
 
 volumes:
   repomind-data:
+  postgres-data:

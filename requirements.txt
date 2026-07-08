@@ -10,9 +10,13 @@ sentence-transformers
 faiss-cpu
 numpy
 SQLAlchemy
+psycopg[binary]
 python-jose[cryptography]
 email-validator
 celery
 redis
+tree-sitter
+tree-sitter-languages
 pytest
 httpx
+

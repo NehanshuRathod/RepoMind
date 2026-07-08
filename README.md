@@ -1,4 +1,4 @@
-﻿# Repomind
+# Repomind
 
 Repomind is an AI-powered semantic code search backend. It lets a developer create projects, index a GitHub repository or uploaded ZIP file, and ask natural-language questions such as "where is authentication handled?" or "which function builds embeddings?". Instead of only matching exact keywords, Repomind converts code and queries into vector embeddings and uses FAISS to find code chunks with similar meaning.
 
@@ -23,22 +23,25 @@ This makes the system useful for onboarding into a new repository, exploring unf
 - User registration and login
 - Password hashing with salted PBKDF2-HMAC
 - JWT-based protected APIs
-- Project creation, listing, refresh, and deletion
+- Project creation, listing, status polling, refresh, and deletion
 - GitHub repository cloning
 - ZIP repository upload and safe extraction
 - Temporary repository workspaces with cleanup after indexing
 - File loading and filtering for common programming languages
-- Python AST parsing
-- Function, async function, method, and class chunk extraction for Python
+- Python AST parsing and Tree-sitter parsing for JavaScript, TypeScript, Java, and Go
+- Function, async function, method, and class chunk extraction across supported languages
 - Batch embeddings with `sentence-transformers/all-MiniLM-L6-v2`
 - Singleton model loading so the embedding model is not reloaded per request
 - Normalized vectors for cosine-style similarity search
-- FAISS vector index persistence per project
-- SQLAlchemy metadata storage
+- FAISS HNSW vector index persistence per project
+- SQLAchemy metadata storage
 - Per-project chat history
-- Optional Celery and Redis wiring for queued refresh tasks
-- Docker and Docker Compose setup
-- GitHub Actions CI for tests
+- Celery and Redis-backed queued indexing and refresh tasks (API requests return immediately and the caller polls `/projects/{id}/status`)
+- Incremental indexing: file hashes are tracked and only changed files are re-embedded; unchanged files reuse previously stored chunk vectors
+- Redis query caching for repeated searches (short TTL, keyed by query + index version)
+- Structured JSON observability logs and a `/metrics` endpoint (indexing duration, search latency, error rates, request counts)
+- In-memory rate limiting on search and indexing endpoints
+- Hash-based chunk-level deduplication before embedding (duplicate functions are embedded once)
 
 ## How Repomind Works
 
@@ -56,6 +59,7 @@ GitHub URL or ZIP upload
     -> ASTParser
     -> ChunkExtractor
     -> EmbeddingService
+    -> reusable vector metadata
     -> FaissStore
     -> SQL metadata tables
 ```
@@ -73,12 +77,16 @@ The important steps are:
    - It accepts common code extensions such as `.py`, `.js`, `.ts`, `.java`, `.go`, `.rs`, `.cpp`, and `.c`.
 
 3. Code parsing and chunking
-   - Python files are parsed with Python's built-in `ast` module.
-   - Repomind extracts classes, functions, async functions, and methods.
+    - Python files are parsed with Python's built-in `ast` module.
+    - JavaScript, TypeScript, Java, and Go files are parsed with Tree-sitter
+      (`tree-sitter` + `tree-sitter-languages`) when those packages are installed, and fall
+      back to a brace-aware regex extractor otherwise so indexing still works everywhere.
+    - Repomind extracts classes, functions, async functions, and methods.
    - Each chunk keeps its file path, name, class name, function name, start line, end line, language, content hash, and source snippet.
 
 4. Embedding generation
-   - Each code chunk is passed to the sentence-transformer model.
+   - New or changed code chunks are passed to the sentence-transformer model.
+   - Unchanged files reuse previously stored chunk vectors.
    - Embeddings are generated in batches.
    - Vectors are normalized before storage.
 
@@ -151,9 +159,9 @@ During indexing, code chunks are embedded as a batch. Batch embedding is much fa
 
 ### FAISS
 
-FAISS is used as the vector search engine. Repomind currently uses a flat inner-product index with normalized vectors, which behaves like cosine similarity.
+FAISS is used as the vector search engine. Repomind currently creates an HNSW inner-product index with normalized vectors, which behaves like cosine similarity while avoiding a full scan as indexes grow.
 
-This is simple, accurate, and good for a first production milestone. The architecture can later support larger FAISS index types such as HNSW or IVF for very large repositories.
+HNSW is a practical production-oriented default because it gives fast approximate nearest-neighbor search with strong recall for semantic code search workloads.
 
 ## Backend Architecture
 
@@ -210,7 +218,7 @@ Metadata layer:
 
 ## Database Design
 
-The default database is SQLite for local development and simple deployment.
+The application default is SQLite for local development. Docker Compose uses PostgreSQL because concurrent indexing, search, and chat writes are much safer on PostgreSQL than SQLite.
 
 Main tables:
 
@@ -261,9 +269,14 @@ VECTOR_STORE_DIR=storage/vector_indexes
 UPLOAD_DIR=storage/uploads
 EMBEDDING_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2
 REDIS_URL=redis://localhost:6379/0
+QUERY_CACHE_TTL_SECONDS=300
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_PER_MINUTE=120
+SEARCH_RATE_LIMIT_PER_MINUTE=30
+INDEXING_RATE_LIMIT_PER_MINUTE=10
 ```
 
-SQLite is the default. PostgreSQL can be introduced later by changing `DATABASE_URL` and installing the correct PostgreSQL driver.
+SQLite is convenient for local development. The Docker Compose stack defaults to PostgreSQL for production-like concurrency. A `/metrics` endpoint exposes JSON metrics (indexing duration, search latency, error rates, request counts), and a `/health` endpoint reports liveness.
 
 ## Local Setup
 
@@ -358,7 +371,15 @@ POST /projects/upload?project_name=my-uploaded-project
 
 Upload a `.zip` file as multipart form data.
 
-5. Search a project
+5. Poll indexing status
+
+```http
+GET /projects/{project_id}/status
+``` 
+
+The status response includes `status`, `progress`, `task_id`, `error`, indexed file count, indexed chunk count, and last indexed timestamp.
+
+6. Search a project
 
 ```http
 POST /projects/{project_id}/search
@@ -373,13 +394,13 @@ Body:
 }
 ```
 
-6. Read chat history
+7. Read chat history
 
 ```http
 GET /projects/{project_id}/chat
 ```
 
-7. Delete a project
+8. Delete a project
 
 ```http
 DELETE /projects/{project_id}
@@ -389,7 +410,7 @@ Deleting a project removes database records and the related FAISS index file.
 
 ## Background Workers
 
-Repomind includes Celery wiring for queued project refresh tasks.
+Repomind uses Celery and Redis for queued indexing and refresh tasks. API requests enqueue work and return quickly while clients poll `/projects/{project_id}/status`.
 
 Start Redis, then run:
 
@@ -403,7 +424,7 @@ Redis is configured through `REDIS_URL`, defaulting to:
 redis://localhost:6379/0
 ```
 
-The current API path performs indexing synchronously. The Celery integration is ready for async job orchestration and progress endpoints in a later milestone.
+The API path no longer performs repository indexing synchronously. Workers update project status and progress as indexing advances.
 
 ## Docker
 
@@ -416,8 +437,10 @@ docker compose up --build
 The compose setup starts:
 
 - FastAPI application
+- Celery worker
+- PostgreSQL
 - Redis
-- Persistent Docker volume for local app data
+- Persistent Docker volumes for local app data and PostgreSQL data
 
 ## Tests
 
@@ -431,7 +454,7 @@ The test suite currently covers:
 
 - Python AST chunk extraction
 - File filtering
-- FAISS save, load, and search
+- FAISS HNSW save, load, and search
 - Password hashing and verification
 
 ## Current Limitations
@@ -440,11 +463,10 @@ This is a strong backend milestone, but it is not the final version of every fea
 
 Current limitations:
 
-- Semantic chunk extraction is implemented for Python first.
-- Other language files are discovered and tracked as file metadata, but deep AST chunking for JavaScript, TypeScript, Java, Go, Rust, and C++ is future work.
-- Indexing currently runs synchronously from the API path.
-- Celery is wired, but full job status, progress tracking, and retry dashboards are future work.
-- Refresh currently rebuilds the project index instead of doing a fully incremental chunk-level update.
+- Semantic chunk extraction is implemented for Python (AST) and JavaScript, TypeScript, Java, and Go (Tree-sitter). Rust and C/C++ files are discovered and tracked as metadata but not yet deeply chunked.
+- Celery workers update project status and progress, but there is not yet a dedicated job dashboard.
+- Incremental refresh reuses vectors for unchanged files, but the FAISS index file is rebuilt to keep vector positions compact and consistent.
+- Rate limiting is an in-memory fixed window per client IP; for multi-instance deployments a shared store (e.g. Redis) would be needed.
 - There is no frontend yet.
 - The search response returns relevant code locations and snippets; it does not yet generate a natural-language answer with an LLM.
 
@@ -452,15 +474,11 @@ Current limitations:
 
 Good next steps:
 
-- Add Tree-sitter parsers for multiple languages.
-- Add true incremental indexing based on changed and removed file hashes.
-- Add async indexing endpoints with job status and progress reporting.
-- Add Redis caching for repeated queries and project metadata.
-- Add PostgreSQL support for production deployments.
+- Add deeper chunk-level incremental indexing and deletion-aware parser support across languages.
 - Add a frontend for project management and search.
 - Add result reranking for better search quality.
-- Add observability metrics for indexing duration, search latency, and error rates.
-- Add more integration tests around auth, project ownership, and upload indexing.
+- Add distributed rate limiting via a shared store for multi-instance deployments.
+- Add a dedicated indexing job dashboard.
 
 ## Why This Is a Good Portfolio Project
 

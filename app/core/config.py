@@ -17,6 +17,11 @@ class Settings(BaseSettings):
     embedding_batch_size: int = 32
     cors_origins: list[str] = ["*"]
     redis_url: str = "redis://localhost:6379/0"
+    query_cache_ttl_seconds: int = 300
+    rate_limit_enabled: bool = True
+    rate_limit_per_minute: int = 120
+    search_rate_limit_per_minute: int = 30
+    indexing_rate_limit_per_minute: int = 10
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
@@ -30,4 +35,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
-
