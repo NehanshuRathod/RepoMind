@@ -1,4 +1,5 @@
 ﻿import time
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,7 +16,13 @@ from app.core.metrics import metrics
 from app.core.ratelimit import RateLimitMiddleware
 
 
-app = FastAPI(title="Repomind API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(title="Repomind API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -50,11 +57,6 @@ async def observability_middleware(request: Request, call_next):
         duration_seconds=round(duration, 4),
     )
     return response
-
-
-@app.on_event("startup")
-def on_startup() -> None:
-    init_db()
 
 
 app.include_router(auth_router)

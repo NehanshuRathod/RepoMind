@@ -56,13 +56,3 @@ def client():
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
-
-
-def register_and_login(client, email, password="Password123!"):
-    client.post("/auth/register", json={"email": email, "password": password, "full_name": "Tester"})
-    response = client.post("/auth/login", data={"username": email, "password": password})
-    return response.json()["access_token"]
-
-
-def auth_header(token):
-    return {"Authorization": f"Bearer {token}"}
